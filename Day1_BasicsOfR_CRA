@@ -1,0 +1,148 @@
+# ============================================================
+# Credit Risk Analytics in R
+# Day 1: R Basics + Synthetic Loan Data Generation
+# ============================================================
+
+
+#R Basics
+
+# Vectors
+loan_amounts <- c(50000, 150000, 75000, 200000, 30000)
+credit_scores <- c(720, 580, 650, 780, 510)
+
+cat("Loan Amounts:", loan_amounts, "\n")
+cat("Credit Scores:", credit_scores, "\n")
+
+# Basic stats
+cat("Mean Loan Amount:", mean(loan_amounts), "\n")
+cat("Median Credit Score:", median(credit_scores), "\n")
+
+
+#Data Types relevant to CRA
+# Numeric
+age <- 35L                    # integer
+income <- 85000.50            # double
+
+# Character
+employment_type <- "Salaried"
+
+# Factor (categorical) — critical for WoE/IV binning later
+loan_grade <- factor("B", levels = c("A", "B", "C", "D", "E"))
+default_flag <- factor(1, levels = c(0, 1),
+                       labels = c("Non-Default", "Default"))
+
+cat("\nData Types:\n")
+cat("Age (int):", age, "| class:", class(age), "\n")
+cat("Income (dbl):", income, "| class:", class(income), "\n")
+cat("Employment:", employment_type, "\n")
+cat("Loan Grade:", as.character(loan_grade), "\n")
+cat("Default Flag:", as.character(default_flag), "\n")
+
+
+#Data Frame — the core CRA structure
+
+# A small sample loan portfolio
+df_sample <- data.frame(
+  loan_id         = 1:5,
+  loan_amount     = c(50000, 150000, 75000, 200000, 30000),
+  credit_score    = c(720, 580, 650, 780, 510),
+  annual_income   = c(600000, 420000, 720000, 1200000, 300000),
+  employment_type = factor(c("Salaried", "Self-Employed", "Salaried",
+                              "Salaried", "Self-Employed")),
+  default         = c(0, 1, 0, 0, 1)   # target variable: 1 = defaulted
+)
+
+cat("\nSample Loan Portfolio:\n")
+print(df_sample)
+cat("\nStructure:\n")
+str(df_sample)
+
+
+#Synthetic Dataset Generation
+# ~1000 rows, retail lending context (personal loans)
+# Realistic relationships: lower credit score → higher default probability
+
+set.seed(42)   # reproducibility
+n <- 1000
+
+# ---- Borrower features ----
+age             <- sample(22:65, n, replace = TRUE)
+annual_income   <- round(rnorm(n, mean = 600000, sd = 200000))
+annual_income   <- pmax(annual_income, 180000)   # floor at 1.8L
+
+credit_score    <- round(rnorm(n, mean = 650, sd = 80))
+credit_score    <- pmin(pmax(credit_score, 300), 900)   # clamp 300–900
+
+loan_amount     <- round(rnorm(n, mean = 150000, sd = 80000))
+loan_amount     <- pmax(loan_amount, 10000)
+
+loan_tenure_months <- sample(c(12, 24, 36, 48, 60), n, replace = TRUE)
+
+employment_type <- sample(
+  c("Salaried", "Self-Employed", "Government"),
+  n, replace = TRUE, prob = c(0.55, 0.35, 0.10)
+)
+
+# Debt-to-Income ratio
+dti_ratio <- round(runif(n, min = 0.05, max = 0.65), 2)
+
+# Number of past delinquencies
+num_delinquencies <- sample(0:5, n, replace = TRUE,
+                             prob = c(0.60, 0.20, 0.10, 0.05, 0.03, 0.02))
+
+# ---- Target: default (1 = defaulted within 12 months) ----
+# Logit driven by credit score, DTI, and delinquencies
+log_odds <- -4 +
+  (-0.008 * credit_score) +
+  (3.0    * dti_ratio) +
+  (0.5    * num_delinquencies) +
+  (0.3    * ifelse(employment_type == "Self-Employed", 1, 0))
+
+prob_default <- 1 / (1 + exp(-log_odds))   # sigmoid
+default      <- rbinom(n, 1, prob = prob_default)
+
+# ---- Assemble final data frame ----
+loan_data <- data.frame(
+  loan_id            = paste0("LN", sprintf("%04d", 1:n)),
+  age                = age,
+  annual_income      = annual_income,
+  credit_score       = credit_score,
+  loan_amount        = loan_amount,
+  loan_tenure_months = loan_tenure_months,
+  employment_type    = factor(employment_type,
+                              levels = c("Salaried", "Self-Employed", "Government")),
+  dti_ratio          = dti_ratio,
+  num_delinquencies  = num_delinquencies,
+  default            = default   # 0 = Non-Default, 1 = Default
+)
+
+cat("\n── Synthetic Loan Dataset ──\n")
+cat("Rows:", nrow(loan_data), "| Columns:", ncol(loan_data), "\n")
+print(head(loan_data, 10))
+
+
+#Quick Sanity Checks
+cat("\n── Summary Statistics ──\n")
+print(summary(loan_data))
+
+cat("\n── Default Rate ──\n")
+default_rate <- mean(loan_data$default)
+cat(sprintf("Overall Default Rate: %.2f%%\n", default_rate * 100))
+
+cat("\n── Default Rate by Employment Type ──\n")
+print(tapply(loan_data$default, loan_data$employment_type, mean))
+
+cat("\n── Default Rate by Credit Score Band ──\n")
+loan_data$score_band <- cut(
+  loan_data$credit_score,
+  breaks = c(300, 500, 580, 670, 740, 900),
+  labels = c("Very Poor", "Poor", "Fair", "Good", "Excellent"),
+  include.lowest = TRUE
+)
+print(tapply(loan_data$default, loan_data$score_band, mean))
+
+
+#Save dataset
+dir.create("data", showWarnings = FALSE)
+write.csv(loan_data, "data/synthetic_loan_data.csv", row.names = FALSE)
+cat("\nDataset saved to data/synthetic_loan_data.csv\n")
